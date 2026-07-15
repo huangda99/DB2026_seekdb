@@ -47,6 +47,12 @@ public:
     SURROGATE_LOW = 6,
   };
 
+  static int classify_first_valid_char(ObCollationType coll_type,
+                                       const char *input,
+                                       const int64_t input_len,
+                                       int64_t &char_len,
+                                       CharType &type);
+
   static int classify_first_char(ObCollationType coll_type,
                                  const char *input,
                                  const uint8_t char_len,
@@ -484,6 +490,78 @@ inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, 
   }
   return ret;
 }
+
+inline int ObFTCharUtil::classify_first_valid_char(ObCollationType coll_type,
+                                                   const char *input,
+                                                   const int64_t input_len,
+                                                   int64_t &char_len,
+                                                   CharType &type)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(coll_type <= CS_TYPE_INVALID || coll_type >= CS_TYPE_MAX)) {
+      ret = OB_ERR_UNEXPECTED;
+      STORAGE_FTS_LOG(WARN, "Invalid collation type", K(ret), K(coll_type));
+      return ret;
+    }
+    
+    if (OB_ISNULL(input)) {
+      ret = OB_NOT_INIT;
+      STORAGE_FTS_LOG(WARN, "Null buffer passed in", K(ret), KP(input));
+      return ret;
+    }
+    
+    if (input_len <= 0) {
+      char_len = 0;
+      type = CharType::USELESS;
+      return ret;
+    }
+    
+    // ===== 第一步：直接实现 first_valid_char 的逻辑 =====
+    const ObCharsetInfo *cs = ObCharset::get_charset(coll_type);
+    if (OB_ISNULL(cs) || OB_ISNULL(cs->cset)) {
+      ret = OB_NOT_SUPPORTED;
+      STORAGE_FTS_LOG(WARN, "Unsupported charset or collation", K(ret), K(coll_type));
+      return ret;
+    }
+    
+    int error = 0;
+    int64_t len = static_cast<int64_t>(cs->cset->well_formed_len(cs, 
+                                                                 input, 
+                                                                 input + input_len, 
+                                                                 1, 
+                                                                 &error));
+    if (error != 0) {
+      ret = OB_INVALID_ARGUMENT;
+      STORAGE_FTS_LOG(WARN, "Invalid encoding found", K(ret), K(error));
+      return ret;
+    }
+    
+    char_len = static_cast<uint8_t>(len);
+    
+    // ===== 第二步：直接实现 classify_first_char 的逻辑 =====
+    ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+    
+    switch (cs_type) {
+    case CHARSET_UTF8MB4: {
+      ret = do_classify<CHARSET_UTF8MB4>(input, char_len, type);
+      break;
+    }
+    case CHARSET_UTF16: {
+      ret = do_classify<CHARSET_UTF16>(input, char_len, type);
+      break;
+    }
+    case CHARSET_UTF16LE: {
+      ret = do_classify<CHARSET_UTF16LE>(input, char_len, type);
+      break;
+    }
+    default:
+      ret = OB_NOT_SUPPORTED;
+      STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+      break;
+    }
+    
+    return ret;
+  }
 
 inline int ObFTCharUtil::classify_first_char(ObCollationType coll_type,
                                              const char *input,

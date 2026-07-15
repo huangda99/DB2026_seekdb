@@ -39,9 +39,10 @@ int ObIIKProcessor::process(TokenizeContext &ctx)
   const char *ch = nullptr;
   uint8_t char_len = 0;
 
-  if (OB_FAIL(ctx.current_char_type(type))) {
-    LOG_WARN("fail to get current char type", K(ret));
-  } else if (OB_FAIL(ctx.current_char(ch, char_len))) {
+  // if (OB_FAIL(ctx.current_char_type(type))) {
+  //   LOG_WARN("fail to get current char type", K(ret));
+  // } else if (OB_FAIL(ctx.current_char(ch, char_len))) {
+  if (OB_FAIL(ctx.current_char_and_type(ch, char_len, type))) {
     LOG_WARN("Fail to get current char", K(ret));
   } else if (OB_FAIL(do_process(ctx, ch, char_len, type))) {
     LOG_WARN("Failed to do process char", K(ret));
@@ -66,8 +67,15 @@ int TokenizeContext::init()
 
   if (OB_ISNULL(fulltext_) || fulltext_len_ <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(prepare_next_char())) {
-    LOG_WARN("Failed to prepare next char", K(ret));
+  } else {
+    // 缓存字符集信息，避免重复查找
+    charset_info_ = ObCharset::get_charset(coll_type_);
+    if (OB_ISNULL(charset_info_) || OB_ISNULL(charset_info_->cset)) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_WARN("Unsupported charset", K(ret), K(coll_type_));
+    } else if (OB_FAIL(prepare_next_char())) {
+      LOG_WARN("Failed to prepare next char", K(ret));
+    }
   }
   return ret;
 }
@@ -78,6 +86,19 @@ int TokenizeContext::reset_resource()
   result_list_.reset();
   token_list_.reset();
   return OB_SUCCESS;
+}
+
+int TokenizeContext::current_char_and_type(const char *&ch, uint8_t &char_len, ObFTCharUtil::CharType &type)
+{
+  int ret = OB_SUCCESS;
+  if (cursor_ >= fulltext_len_) {
+    ret = OB_ITER_END;
+  } else {
+    ch = fulltext_ + cursor_;
+    char_len = next_char_len_;
+    type = next_char_type_;
+  }
+  return ret;
 }
 
 int TokenizeContext::current_char(const char *&ch, uint8_t &char_len)
@@ -106,17 +127,26 @@ int TokenizeContext::current_char_type(ObFTCharUtil::CharType &type)
 int TokenizeContext::prepare_next_char()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
-                                          fulltext_ + cursor_,
-                                          fulltext_len_ - cursor_,
-                                          next_char_len_))) {
-    LOG_WARN("Failed to get first valid char, ", K(ret));
-  } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
-                                                       fulltext_ + cursor_,
-                                                       next_char_len_,
-                                                       next_char_type_))) {
-    LOG_WARN("Failed to classify first char", K(ret));
+  // if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
+  //                                         fulltext_ + cursor_,
+  //                                         fulltext_len_ - cursor_,
+  //                                         next_char_len_))) {
+  //   LOG_WARN("Failed to get first valid char, ", K(ret));
+  // } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
+  //                                                      fulltext_ + cursor_,
+  //                                                      next_char_len_,
+  //                                                      next_char_type_))) {
+  //   LOG_WARN("Failed to classify first char", K(ret));
+  // }
+  // 使用合并函数：一次调用完成两个任务
+  if (OB_FAIL(ObFTCharUtil::classify_first_valid_char(coll_type_,
+                                                      fulltext_ + cursor_,
+                                                      fulltext_len_ - cursor_,
+                                                      next_char_len_,
+                                                      next_char_type_))) {
+    LOG_WARN("Failed to classify first valid char", K(ret));
   }
+  
   return ret;
 }
 
